@@ -4,7 +4,10 @@ import com.test.junit.anotation.AfterAll;
 import com.test.junit.anotation.AfterMethod;
 import com.test.junit.anotation.BeforeAll;
 import com.test.junit.anotation.BeforeMethod;
+import com.test.junit.anotation.Description;
 import com.test.junit.anotation.Test;
+import com.test.junit.anotation.TimeUnit;
+import com.test.junit.anotation.Timeout;
 import com.test.junit.assertion.AssertionsRuntimeException;
 
 import java.lang.annotation.Annotation;
@@ -14,6 +17,9 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeoutException;
 
 public class TestRunner {
 
@@ -78,7 +84,8 @@ public class TestRunner {
             try {
                 method.setAccessible(true);
                 invokeMethods(instance, beforeEachMethods);
-                method.invoke(instance);
+                printDescription(method);
+                invokeMethodTimed(instance, method);
                 invokeMethods(instance, afterEachMethods);
                 handleSunnyDayScenario(method);
             } catch (InvocationTargetException e) {
@@ -86,6 +93,8 @@ public class TestRunner {
                     AssertionsRuntimeException ae = (AssertionsRuntimeException) e.getCause();
                     handleAssertionException(method, ae);
                 }
+            } catch (TimeoutException e) {
+                handleTimedOutException(method, e.getMessage());
             } catch (IllegalAccessException e) {
                 throw new RuntimeException(e);
             }
@@ -98,9 +107,52 @@ public class TestRunner {
         System.out.println(ConsoleColors.RESET);
     }
 
+    private static void handleTimedOutException(Method method, String message) {
+        System.out.println(ConsoleColors.RED);
+        System.out.println(String.format("[Test method %s] is failed. Timed out. %s", method.getName(), message));
+        System.out.println(ConsoleColors.RESET);
+    }
+
     private static void handleSunnyDayScenario(Method method) {
         System.out.println(ConsoleColors.GREEN);
         System.out.println(String.format("[Test method %s] is successful", method.getName()));
         System.out.println(ConsoleColors.RESET);
+    }
+
+    private static void printDescription(Method method) {
+        if (method.isAnnotationPresent(Description.class)) {
+            Description description = method.getAnnotation(Description.class);
+            System.out.print(String.format("[Test method %s] detailed description: %s", method.getName(), description.message()));
+        }
+    }
+
+    private static void invokeMethodTimed(Object instance, Method method) throws InvocationTargetException, IllegalAccessException, TimeoutException {
+        if (!method.isAnnotationPresent(Timeout.class)) {
+            method.invoke(instance);
+        } else {
+            long targetTime = method.getAnnotation(Timeout.class).time();
+            TimeUnit timeUnit = method.getAnnotation(Timeout.class).timeUnit();
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            try {
+                executor.submit(() -> {
+                    try {
+                        method.invoke(instance);
+                    } catch (IllegalAccessException e) {
+                        throw new RuntimeException(e);
+                    } catch (InvocationTargetException e) {
+                        if (e.getCause() instanceof AssertionsRuntimeException) {
+                            AssertionsRuntimeException ae = (AssertionsRuntimeException) e.getCause();
+                            handleAssertionException(method, ae);
+                        }
+                    }
+                });
+                if (!executor.awaitTermination(targetTime, timeUnit.getTimeUnit())) {
+                    executor.shutdownNow();
+                    throw new TimeoutException("Expected running time is " + targetTime + " " + timeUnit.name());
+                }
+            } catch (InterruptedException e) {
+                throw new TimeoutException("Expected running time is " + targetTime + " " + timeUnit.name());
+            }
+        }
     }
 }
