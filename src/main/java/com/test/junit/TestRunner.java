@@ -137,13 +137,8 @@ public class TestRunner {
                 executor.submit(() -> {
                     try {
                         method.invoke(instance);
-                    } catch (IllegalAccessException e) {
+                    } catch (IllegalAccessException | InvocationTargetException e) {
                         throw new RuntimeException(e);
-                    } catch (InvocationTargetException e) {
-                        if (e.getCause() instanceof AssertionsRuntimeException) {
-                            AssertionsRuntimeException ae = (AssertionsRuntimeException) e.getCause();
-                            handleAssertionException(method, ae);
-                        }
                     }
                 });
                 if (!executor.awaitTermination(targetTime, timeUnit.getTimeUnit())) {
@@ -152,6 +147,12 @@ public class TestRunner {
                 }
             } catch (InterruptedException e) {
                 throw new TimeoutException("Expected running time is " + targetTime + " " + timeUnit.name());
+            } catch (RuntimeException e){
+                if (e.getCause() instanceof InvocationTargetException){
+                    throw new InvocationTargetException(e);
+                } else {
+                    throw new RuntimeException(e);
+                }
             }
         }
     }
